@@ -145,7 +145,7 @@
   function openCart() {
     $("#cart-drawer").classList.remove("hidden");
     $("#drawer-scrim").classList.remove("hidden");
-    loadSlots();
+    preparePickupDate();
   }
 
   function closeCart() {
@@ -153,34 +153,22 @@
     $("#drawer-scrim").classList.add("hidden");
   }
 
-  async function loadSlots() {
-    const select = $("#pickup-slot");
-    select.innerHTML = '<option value="">Loading available slots…</option>';
-    try {
-      const date = new Date();
-      const today = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-      const dateInput = $("#pickup-date");
-      if (!dateInput.value) dateInput.value = today;
-      dateInput.min = today;
-      const max = new Date(date);
-      max.setDate(max.getDate() + 30);
-      dateInput.max = `${max.getFullYear()}-${String(max.getMonth() + 1).padStart(2, "0")}-${String(max.getDate()).padStart(2, "0")}`;
-      const result = await api(`/slots?date=${encodeURIComponent(dateInput.value)}`);
-      const available = result.slots.filter(slot => slot.remaining > 0);
-      select.innerHTML = available.length ? '<option value="">Choose a pickup time</option>' + available.map(slot =>
-        `<option value="${slot.id}">${escapeHtml(slot.startTime.slice(0, 5))}–${escapeHtml(slot.endTime.slice(0, 5))} · ${slot.remaining} spots</option>`
-      ).join("") : '<option value="">No pickup slots available</option>';
-    } catch (error) {
-      select.innerHTML = '<option value="">Could not load slots</option>';
-      toast(error.message, true);
-    }
+  function preparePickupDate() {
+    const dateInput = $("#pickup-date");
+    const date = new Date();
+    const today = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+    if (!dateInput.value) dateInput.value = today;
+    dateInput.min = today;
+    const max = new Date(date);
+    max.setDate(max.getDate() + 30);
+    dateInput.max = `${max.getFullYear()}-${String(max.getMonth() + 1).padStart(2, "0")}-${String(max.getDate()).padStart(2, "0")}`;
   }
 
   async function submitOrder() {
     const pickupName = $("#pickup-name").value.trim();
     if (pickupName.length < 2 || pickupName.length > 100) return toast("Enter a pickup name (2–100 characters).", true);
-    const slotId = $("#pickup-slot").value;
-    if (!slotId) return toast("Choose an available pickup slot first.", true);
+    const pickupDate = $("#pickup-date").value;
+    if (!pickupDate) return toast("Choose a pickup date.", true);
     const items = Object.entries(state.cart).map(([foodItemId, quantity]) => ({ foodItemId: Number(foodItemId), quantity: Number(quantity) }));
     if (!items.length) return toast("Your cart is empty.", true);
     $("#payment-amount").textContent = $("#cart-total").textContent;
@@ -202,7 +190,7 @@
       const result = await api("/orders", {
         method: "POST", headers: { "Idempotency-Key": requestId },
         body: {
-          slotId: Number($("#pickup-slot").value),
+          pickupDate: $("#pickup-date").value,
           items: Object.entries(state.cart).map(([foodItemId, quantity]) => ({
             foodItemId: Number(foodItemId), quantity: Number(quantity)
           })),
@@ -217,6 +205,9 @@
       closeCart();
       state.activeOrderId = result.order.id;
       showTicket(result.order);
+      if (result.order.slotDate !== $("#pickup-date").value) {
+        toast(`No capacity was available on your selected date. Pickup is scheduled for ${result.order.slotDate}.`);
+      }
       if (!state.user) {
         $("#page-orders .page-heading h2").textContent = "Order placed";
         $("#student-orders").innerHTML = '<div class="empty-state">Your order details are shown below. Sign in to access order history.</div>';
@@ -227,7 +218,6 @@
     } catch (error) {
       $("#payment-dialog").close();
       toast(error.message, true);
-      await loadSlots();
     } finally {
       button.disabled = false;
       paymentButton.disabled = false;
@@ -239,7 +229,8 @@
     const panel = $("#active-ticket");
     panel.classList.remove("hidden");
     panel.innerHTML = `<div class="ticket-token">${escapeHtml(order.tokenNumber)}</div><h3>${escapeHtml(order.status)}</h3>
-      <p>Pickup ${escapeHtml(order.slotStart || "")}–${escapeHtml(order.slotEnd || "")} · ${money(order.totalAmount)}</p>
+      <p>Pickup date: ${escapeHtml(order.slotDate)}</p>
+      <p>${money(order.totalAmount)}</p>
       <p>${(order.items || []).map(item => `${escapeHtml(item.quantity)} × ${escapeHtml(item.name)}`).join(" &nbsp;·&nbsp; ")}</p>
       <p>${order.status === "READY" ? "Your food is ready for pickup!" : `${Number(order.ordersAhead || 0)} orders ahead`}</p>`;
   }
@@ -263,7 +254,7 @@
       const list = data.orders;
       $("#student-orders").innerHTML = list.length ? list.map(order => `<article class="order-card">
         <div><h3>${escapeHtml(order.tokenNumber)} <span class="status-badge status-${escapeHtml(order.status.toLowerCase())}">${escapeHtml(order.status)}</span></h3>
-          <p>${escapeHtml(order.slotDate)} · ${escapeHtml(order.slotStart.slice(0, 5))} pickup · ${money(order.totalAmount)}</p></div>
+          <p>${escapeHtml(order.slotDate)} · ${money(order.totalAmount)}</p></div>
         <div class="order-actions"><button type="button" class="button button-outline button-small" data-track="${order.id}">Track</button>
           ${["PENDING", "CONFIRMED"].includes(order.status) ? `<button type="button" class="button button-quiet button-small" data-cancel="${order.id}">Cancel</button>` : ""}
           <button type="button" class="button button-quiet button-small" data-reorder="${order.id}">Reorder</button></div></article>`).join("")
@@ -524,7 +515,6 @@
     $("#cart-toggle").addEventListener("click", openCart);
     $("#cart-close").addEventListener("click", closeCart);
     $("#drawer-scrim").addEventListener("click", closeCart);
-    $("#pickup-date").addEventListener("change", loadSlots);
     $("#checkout-button").addEventListener("click", submitOrder);
     $("#payment-confirm").addEventListener("click", completeSimulatedPayment);
     $("#staff-status").addEventListener("change", loadKitchen);

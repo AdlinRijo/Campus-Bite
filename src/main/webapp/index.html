@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#12352d">
   <title>CampusBite | Campus canteen ordering</title>
-  <link rel="stylesheet" href="assets/css/app.css?v=2">
-  <script src="assets/js/app.js?v=2" defer></script>
+  <link rel="stylesheet" href="assets/css/app.css?v=4">
+  <script src="assets/js/app.js?v=4" defer></script>
 </head>
 <body>
   <header class="site-header">
@@ -31,7 +31,7 @@
   <main>
     <section id="page-menu" class="page content-page">
       <div class="page-heading">
-        <div><p class="eyebrow">CAMPUS CANTEEN</p><h2>Today's menu</h2><p>Choose your food and pickup time.</p></div>
+        <div><p class="eyebrow">CAMPUS CANTEEN</p><h2>Today's menu</h2><p>Choose your food for your order.</p></div>
         <div class="menu-tools">
           <label class="search-field"><span aria-hidden="true">⌕</span><input id="menu-search" type="search" placeholder="Search the menu" aria-label="Search menu"></label>
           <button id="cart-toggle" type="button" class="button button-outline cart-toggle">Your order <span id="cart-count" class="cart-count">0</span></button>
@@ -103,7 +103,6 @@
     <div class="checkout">
       <label>Pickup name<input id="pickup-name" type="text" minlength="2" maxlength="100" autocomplete="name" placeholder="Name for your order" required></label>
       <label>Pickup date<input id="pickup-date" type="date" required></label>
-      <label>Pickup time<select id="pickup-slot"><option value="">Loading available slots…</option></select></label>
       <div class="payment-choice"><strong>Google Pay <span>SIMULATION</span></strong><small>Demo only. No real payment will be made.</small></div>
       <div class="checkout-total"><span>Total</span><strong id="cart-total">₹0</strong></div>
       <button id="checkout-button" class="button button-primary button-full" type="button">Continue to Google Pay</button>

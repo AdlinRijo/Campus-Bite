@@ -110,4 +110,66 @@ class CsvOrderServiceTest {
         assertEquals("SIMULATED", placed.paymentStatus());
         assertNotNull(placed.tokenNumber());
     }
+
+    @Test
+    void guestOrderFallsForwardToNextDateWithAvailablePickupCapacity() throws IOException {
+        LocalDate pickupDate = LocalDate.now().plusDays(20);
+        LocalDate nextPickupDate = pickupDate.plusDays(1);
+        long availableSlotId = CsvDataStore.update(state -> {
+            Record fullSlot = state.create("slot");
+            fullSlot.set("slotDate", pickupDate.toString());
+            fullSlot.set("startTime", "12:30");
+            fullSlot.set("endTime", "12:35");
+            fullSlot.set("capacity", "1");
+            fullSlot.set("reservedCount", "1");
+            fullSlot.set("available", "true");
+            state.add(fullSlot);
+
+            Record availableSlot = state.create("slot");
+            availableSlot.set("slotDate", nextPickupDate.toString());
+            availableSlot.set("startTime", "12:35");
+            availableSlot.set("endTime", "12:40");
+            availableSlot.set("capacity", "2");
+            availableSlot.set("reservedCount", "0");
+            availableSlot.set("available", "true");
+            state.add(availableSlot);
+
+            Record laterSlot = state.create("slot");
+            laterSlot.set("slotDate", nextPickupDate.toString());
+            laterSlot.set("startTime", "12:40");
+            laterSlot.set("endTime", "12:45");
+            laterSlot.set("capacity", "2");
+            laterSlot.set("reservedCount", "0");
+            laterSlot.set("available", "true");
+            state.add(laterSlot);
+            return availableSlot.longValue("id");
+        });
+
+        Order placed = new OrderService().place(0, pickupDate, Map.of(3L, 1),
+                "GOOGLE_PAY_SIMULATION", "Guest Customer", "automatic-slot-request");
+
+        assertEquals(availableSlotId, placed.slotId());
+        assertEquals("12:35", placed.slotStart());
+        assertEquals(nextPickupDate.toString(), placed.slotDate());
+        int reservedCount = CsvDataStore.read(state -> state.find("slot", availableSlotId).intValue("reservedCount"));
+        assertEquals(1, reservedCount);
+    }
+
+    @Test
+    void guestOrderCreatesDemoPickupSlotsWhenNoScheduleExists() throws IOException {
+        LocalDate pickupDate = LocalDate.now().plusDays(27);
+
+        Order placed = new OrderService().place(0, pickupDate, Map.of(4L, 1),
+                "GOOGLE_PAY_SIMULATION", "Guest Customer", "generated-slot-request");
+
+        assertEquals(pickupDate.toString(), placed.slotDate());
+        assertNotNull(placed.slotStart());
+        CsvDataStore.read(state -> {
+            Record slot = state.find("slot", placed.slotId());
+            assertEquals(30, slot.intValue("capacity"));
+            assertEquals(1, slot.intValue("reservedCount"));
+            assertEquals("true", slot.get("available"));
+            return null;
+        });
+    }
 }

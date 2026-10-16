@@ -8,7 +8,9 @@ import edu.campusbite.util.CsvDataStore.State;
 
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -16,6 +18,20 @@ import java.util.TreeMap;
 public class OrderService {
     public Order place(long userId, long slotId, Map<Long, Integer> requestedItems,
                        String paymentMethod, String pickupName, String idempotencyKey) throws IOException {
+        return place(userId, slotId, null, requestedItems, paymentMethod, pickupName, idempotencyKey);
+    }
+
+    public Order place(long userId, LocalDate pickupDate, Map<Long, Integer> requestedItems,
+                       String paymentMethod, String pickupName, String idempotencyKey) throws IOException {
+        LocalDate today = LocalDate.now();
+        if (pickupDate == null || pickupDate.isBefore(today) || pickupDate.isAfter(today.plusDays(30))) {
+            throw new IllegalArgumentException("Pickup date must be within the next 30 days.");
+        }
+        return place(userId, 0, pickupDate, requestedItems, paymentMethod, pickupName, idempotencyKey);
+    }
+
+    private Order place(long userId, long slotId, LocalDate pickupDate, Map<Long, Integer> requestedItems,
+                        String paymentMethod, String pickupName, String idempotencyKey) throws IOException {
         if (requestedItems == null || requestedItems.isEmpty() || requestedItems.size() > 30)
             throw new IllegalArgumentException("Your cart is empty or contains too many items.");
         if (!"GOOGLE_PAY_SIMULATION".equals(paymentMethod))
@@ -36,12 +52,26 @@ public class OrderService {
             if (previous != null) {
                 return previous;
             }
-            Record slot = state.find("slot", slotId);
+            Record slot = slotId > 0 ? state.find("slot", slotId) : findAvailableSlot(state, pickupDate);
+            if (slot == null && slotId == 0) {
+                for (LocalDate date = pickupDate; !date.isAfter(LocalDate.now().plusDays(30)); date = date.plusDays(1)) {
+                    LocalDate scheduleDate = date;
+                    boolean hasSchedule = state.all("slot").stream()
+                            .anyMatch(candidate -> candidate.dateValue("slotDate").equals(scheduleDate));
+                    boolean replenishToday = date.equals(LocalDate.now());
+                    if (hasSchedule && !replenishToday) continue;
+                    createDemoSlots(state, date, replenishToday);
+                    slot = findAvailableSlot(state, date);
+                    if (slot != null) break;
+                }
+            }
             if (slot == null || !slot.booleanValue("available")
                     || !LocalDateTime.of(slot.dateValue("slotDate"), slot.timeValue("startTime"))
                     .isAfter(LocalDateTime.now())
                     || slot.intValue("reservedCount") >= slot.intValue("capacity")) {
-                throw new IllegalArgumentException("That pickup slot has just filled or passed. Choose another slot.");
+                throw new IllegalArgumentException(slotId > 0
+                        ? "That pickup slot has just filled or passed. Choose another slot."
+                        : "No upcoming pickup capacity is available.");
             }
 
             BigDecimal total = BigDecimal.ZERO;
@@ -65,7 +95,7 @@ public class OrderService {
             Record order = state.create("order");
             order.set("userId", Long.toString(userId));
             if (!customerName.isEmpty()) order.set("name", customerName);
-            order.set("slotId", Long.toString(slotId));
+            order.set("slotId", Long.toString(slot.longValue("id")));
             order.set("totalAmount", total.toPlainString());
             order.set("status", "PENDING");
             order.set("paymentMethod", paymentMethod);
@@ -89,6 +119,57 @@ public class OrderService {
             }
             return OrderDao.get(state, order.longValue("id"));
         });
+    }
+
+    private static Record findAvailableSlot(State state, LocalDate fromDate) {
+        LocalDateTime now = LocalDateTime.now();
+        return state.all("slot").stream()
+                .filter(candidate -> candidate.booleanValue("available")
+                        && !candidate.dateValue("slotDate").isBefore(fromDate)
+                        && LocalDateTime.of(candidate.dateValue("slotDate"), candidate.timeValue("startTime"))
+                                .isAfter(now)
+                        && candidate.intValue("reservedCount") < candidate.intValue("capacity"))
+                .sorted((first, second) -> {
+                    int dateOrder = first.dateValue("slotDate").compareTo(second.dateValue("slotDate"));
+                    return dateOrder != 0 ? dateOrder
+                            : first.timeValue("startTime").compareTo(second.timeValue("startTime"));
+                })
+                .findFirst().orElse(null);
+    }
+
+    private static void createDemoSlots(State state, LocalDate date, boolean remainingTodayOnly) {
+        int duration = setting(state, "slot_duration_minutes", 5);
+        int capacity = setting(state, "slot_capacity", 30);
+        LocalTime opens = LocalTime.parse(setting(state, "canteen_open", "07:30"));
+        LocalTime closes = LocalTime.parse(setting(state, "canteen_close", "15:00"));
+        LocalTime first = opens;
+        if (remainingTodayOnly) {
+            LocalTime now = LocalTime.now();
+            int minuteOfDay = now.getHour() * 60 + now.getMinute();
+            int nextBoundary = (minuteOfDay / duration + 1) * duration;
+            if (nextBoundary >= 24 * 60) return;
+            LocalTime nextSlot = LocalTime.of(nextBoundary / 60, nextBoundary % 60);
+            if (nextSlot.isAfter(first)) first = nextSlot;
+        }
+        for (LocalTime start = first; start.isBefore(closes);) {
+            LocalTime end = start.plusMinutes(duration);
+            if (end.isAfter(closes)) end = closes;
+            LocalTime slotStart = start;
+            boolean exists = state.all("slot").stream().anyMatch(candidate ->
+                    candidate.dateValue("slotDate").equals(date)
+                            && candidate.timeValue("startTime").equals(slotStart));
+            if (!exists) {
+                Record slot = state.create("slot");
+                slot.set("slotDate", date.toString());
+                slot.set("startTime", start.toString());
+                slot.set("endTime", end.toString());
+                slot.set("capacity", Integer.toString(capacity));
+                slot.set("reservedCount", "0");
+                slot.set("available", "true");
+                state.add(slot);
+            }
+            start = end;
+        }
     }
 
     public Order get(long id, long userId, boolean privileged) throws IOException {
@@ -173,6 +254,11 @@ public class OrderService {
         return state.all("setting").stream().filter(row -> key.equals(row.get("settingKey")))
                 .map(row -> row.get("settingValue")).map(Integer::parseInt)
                 .findFirst().orElse(fallback);
+    }
+
+    private static String setting(State state, String key, String fallback) {
+        return state.all("setting").stream().filter(row -> key.equals(row.get("settingKey")))
+                .map(row -> row.get("settingValue")).findFirst().orElse(fallback);
     }
 
     private static void addNotification(State state, long userId, long orderId, String message) {

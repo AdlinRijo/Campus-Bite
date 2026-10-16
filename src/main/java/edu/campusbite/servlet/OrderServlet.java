@@ -12,6 +12,7 @@ import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
+import java.time.LocalDate;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -47,7 +48,6 @@ public class OrderServlet extends HttpServlet {
         if (user != null && !ApiAccess.requireRole(request, response, "STUDENT")) return;
         try {
             JsonObject body = Json.body(request);
-            long slotId = body.get("slotId").getAsLong();
             String payment = value(body, "paymentMethod", null);
             String pickupName = value(body, "pickupName", null);
             String requestId = request.getHeader("Idempotency-Key");
@@ -60,7 +60,11 @@ public class OrderServlet extends HttpServlet {
                     requested.merge(line.get("foodItemId").getAsLong(), line.get("quantity").getAsInt(), Integer::sum);
                 }
             }
-            Order order = orders.place(user == null ? 0 : user.id(), slotId, requested, payment, pickupName, requestId);
+            long userId = user == null ? 0 : user.id();
+            Order order = body.has("slotId")
+                    ? orders.place(userId, body.get("slotId").getAsLong(), requested, payment, pickupName, requestId)
+                    : orders.place(userId, LocalDate.parse(value(body, "pickupDate", "")),
+                            requested, payment, pickupName, requestId);
             Json.send(response, 201, Map.of("order", order));
         } catch (IllegalArgumentException e) {
             Json.error(response, 400, e.getMessage());

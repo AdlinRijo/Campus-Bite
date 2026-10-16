@@ -1,4 +1,4 @@
 -------------------------------------------------------------------------------
 Test set: edu.campusbite.service.CsvOrderServiceTest
 -------------------------------------------------------------------------------
-Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.254 s -- in edu.campusbite.service.CsvOrderServiceTest
+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.309 s -- in edu.campusbite.service.CsvOrderServiceTest
